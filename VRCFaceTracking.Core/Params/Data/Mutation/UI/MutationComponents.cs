@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
 
@@ -17,6 +18,16 @@ public enum MutationPropertyType
 
 public interface IMutationComponent
 {
+    public string Name { get; }
+}
+
+public class MutationInfo : IMutationComponent
+{
+    public MutationInfo(string name)
+    {
+        Name = name;
+    }
+
     public string Name { get; }
 }
 
@@ -129,17 +140,149 @@ public class MutationRangeProperty : IMutationComponent, INotifyPropertyChanged
 public class MutationAction : IMutationComponent, ICommand
 {
     public string Name { get; }
+    public string ButtonText { get; }
     private readonly Action _execute;
+    private readonly Func<bool> _canExecute;
+    private readonly SynchronizationContext? _synchronizationContext;
 
-    public MutationAction(string name, Action execute)
+    public MutationAction(string name, Action execute, string? buttonText = null, Func<bool>? canExecute = null)
     {
         Name = name;
+        ButtonText = buttonText ?? name;
         _execute = execute;
+        _canExecute = canExecute ?? (() => true);
+        _synchronizationContext = SynchronizationContext.Current;
     }
 
-    public event EventHandler CanExecuteChanged;
+    public event EventHandler? CanExecuteChanged;
 
-    public bool CanExecute(object parameter) => true; // Adjust logic as needed
+    public bool CanExecute(object? parameter) => _canExecute();
 
-    public void Execute(object parameter) => Task.Run(() => _execute());
+    public void Execute(object? parameter)
+    {
+        if (!CanExecute(parameter))
+        {
+            return;
+        }
+
+        Task.Run(() => _execute());
+    }
+
+    public void Refresh()
+    {
+        Dispatch(() => CanExecuteChanged?.Invoke(this, EventArgs.Empty));
+    }
+
+    private void Dispatch(Action action)
+    {
+        if (_synchronizationContext != null && SynchronizationContext.Current != _synchronizationContext)
+        {
+            _synchronizationContext.Post(_ => action(), null);
+            return;
+        }
+
+        action();
+    }
+}
+
+public class MutationStatus : IMutationComponent, INotifyPropertyChanged
+{
+    private readonly Func<string> _getValue;
+    private readonly SynchronizationContext? _synchronizationContext;
+
+    public MutationStatus(string name, Func<string> getValue)
+    {
+        Name = name;
+        _getValue = getValue;
+        _synchronizationContext = SynchronizationContext.Current;
+    }
+
+    public string Name { get; }
+
+    public string Value => _getValue();
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public void Refresh()
+    {
+        Dispatch(() => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Value))));
+    }
+
+    private void Dispatch(Action action)
+    {
+        if (_synchronizationContext != null && SynchronizationContext.Current != _synchronizationContext)
+        {
+            _synchronizationContext.Post(_ => action(), null);
+            return;
+        }
+
+        action();
+    }
+}
+
+public class MutationStatusAction : IMutationComponent, ICommand, INotifyPropertyChanged
+{
+    private readonly Func<string> _getStatus;
+    private readonly Func<string> _getButtonText;
+    private readonly Func<bool> _canExecute;
+    private readonly Action _execute;
+    private readonly SynchronizationContext? _synchronizationContext;
+
+    public MutationStatusAction(
+        string name,
+        Func<string> getStatus,
+        Func<string> getButtonText,
+        Func<bool> canExecute,
+        Action execute)
+    {
+        Name = name;
+        _getStatus = getStatus;
+        _getButtonText = getButtonText;
+        _canExecute = canExecute;
+        _execute = execute;
+        _synchronizationContext = SynchronizationContext.Current;
+    }
+
+    public string Name { get; }
+
+    public string Status => _getStatus();
+
+    public string ButtonText => _getButtonText();
+
+    public event EventHandler? CanExecuteChanged;
+
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public bool CanExecute(object? parameter) => _canExecute();
+
+    public void Execute(object? parameter)
+    {
+        if (!CanExecute(parameter))
+        {
+            return;
+        }
+
+        Task.Run(() => _execute());
+    }
+
+    public void Refresh()
+    {
+        Dispatch(() =>
+        {
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Status)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ButtonText)));
+            CanExecuteChanged?.Invoke(this, EventArgs.Empty);
+        });
+    }
+
+    private void Dispatch(Action action)
+    {
+        if (_synchronizationContext != null && SynchronizationContext.Current != _synchronizationContext)
+        {
+            _synchronizationContext.Post(_ => action(), null);
+            return;
+        }
+
+        action();
+    }
 }
